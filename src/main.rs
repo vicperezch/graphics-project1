@@ -39,9 +39,7 @@ pub fn render_maze(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize
     }
 }
 
-fn render3d(framebuffer: &mut Framebuffer, player: &Player) {
-    let maze = load_maze("maze.txt");
-    let block_size = 100;
+fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Maze, block_size: usize) {
     let num_rays = framebuffer.width;
 
     let hw = framebuffer.width as f32 / 2.0; // precalculated half width
@@ -54,10 +52,13 @@ fn render3d(framebuffer: &mut Framebuffer, player: &Player) {
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
         let intersect = cast_ray(framebuffer, &maze, &player, a, block_size, false);
 
+        if intersect.distance > 4000.0 {
+            continue;
+        }
+
         // Calculate the height of the stake
         let distance_to_wall = intersect.distance * 5.0; // how far is this wall from the player
         let distance_to_projection_plane = hw / (player.fov / 2.0).tan(); // how far is the "player" from the "camera"
-        // this ratio doesn't really matter as long as it is a function of distance
         let stake_height = (hh / distance_to_wall) * distance_to_projection_plane;
 
         // Calculate the position to draw the stake
@@ -78,7 +79,7 @@ fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster Example")
+        .title("Raycaster")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
@@ -94,15 +95,15 @@ fn main() {
     // Load the maze once before the loop
     let maze = load_maze("maze.txt");
 
+    let mut mode = "3D";
+
     while !window.window_should_close() {
         // 1. clear framebuffer
         framebuffer.clear();
 
-        process_events(&window, &mut player);
+        process_events(&window, &mut player, &maze, block_size);
 
-        let mut mode = "3D";
-
-        if window.is_key_down(KeyboardKey::KEY_M) {
+        if window.is_key_pressed(KeyboardKey::KEY_M) {
             mode = if mode == "2D" { "3D" } else { "2D" };
         }
 
@@ -117,7 +118,7 @@ fn main() {
                 cast_ray(&mut framebuffer, &maze, &player, a, block_size, true);
             }
         } else {
-            render3d(&mut framebuffer, &player);
+            render3d(&mut framebuffer, &player, &maze, block_size);
         }
 
         // 3. swap buffers

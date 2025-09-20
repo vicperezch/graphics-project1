@@ -18,6 +18,7 @@ pub fn cast_ray(
     draw_line: bool,
 ) -> Intersect {
     let mut d = 0.0;
+    const MAX_DISTANCE: f32 = 5000.0; // Maximum ray distance to prevent infinite loops
 
     framebuffer.set_current_color(Color::WHITESMOKE);
 
@@ -29,6 +30,14 @@ pub fn cast_ray(
 
         let i = x / block_size;
         let j = y / block_size;
+
+        // Check bounds before accessing the maze array
+        if j >= maze.len() || i >= maze[0].len() {
+            return Intersect {
+                distance: d,
+                impact: '#', // Return a wall character for out of bounds
+            };
+        }
 
         if maze[j][i] != ' ' {
             return Intersect {
@@ -42,5 +51,12 @@ pub fn cast_ray(
         }
 
         d += 10.0;
+
+        if d > MAX_DISTANCE {
+            return Intersect {
+                distance: d,
+                impact: ' ',
+            };
+        }
     }
 }
