@@ -12,31 +12,6 @@ use std::f32::consts::PI;
 use crate::caster::cast_ray;
 use crate::player::process_events;
 
-fn draw_cell(framebuffer: &mut Framebuffer, xo: usize, yo: usize, block_size: usize, cell: char) {
-    if cell == ' ' {
-        return;
-    }
-
-    framebuffer.set_current_color(Color::RED);
-
-    for x in xo..xo + block_size {
-        for y in yo..yo + block_size {
-            framebuffer.set_pixel(x as i32, y as i32);
-        }
-    }
-}
-
-pub fn render_maze(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize) {
-    for (row_index, row) in maze.iter().enumerate() {
-        for (col_index, &cell) in row.iter().enumerate() {
-            let xo = col_index * block_size;
-            let yo = row_index * block_size;
-
-            draw_cell(framebuffer, xo, yo, block_size, cell);
-        }
-    }
-}
-
 fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Maze, block_size: usize) {
     let num_rays = framebuffer.width / 2; // Reduce ray count for performance
     let width = framebuffer.width as f32;
@@ -80,6 +55,87 @@ fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Maze, block_s
     }
 }
 
+fn render_minimap(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    original_block_size: usize,
+) {
+    // Minimap configuration
+    let minimap_scale = 5; // How much smaller the minimap blocks are
+    let minimap_block_size = original_block_size / minimap_scale;
+    let minimap_width = maze[0].len() * minimap_block_size;
+    let minimap_height = maze.len() * minimap_block_size;
+    let margin = 20; // Margin from screen edges
+    let padding = 10; // Padding inside minimap border
+
+    // Position minimap in top-right corner
+    let minimap_x = framebuffer.width as usize - minimap_width - margin - padding * 2;
+    let minimap_y = margin;
+
+    // Draw minimap background (dark transparent effect)
+    framebuffer.set_current_color(Color::new(0, 0, 0, 180));
+    for x in (minimap_x - padding)..(minimap_x + minimap_width + padding) {
+        for y in (minimap_y - padding)..(minimap_y + minimap_height + padding) {
+            framebuffer.set_pixel(x as i32, y as i32);
+        }
+    }
+
+    // Draw minimap border
+    framebuffer.set_current_color(Color::new(100, 100, 100, 255));
+    // Top and bottom borders
+    for x in (minimap_x - padding)..(minimap_x + minimap_width + padding) {
+        framebuffer.set_pixel(x as i32, (minimap_y - padding) as i32);
+        framebuffer.set_pixel(x as i32, (minimap_y + minimap_height + padding - 1) as i32);
+    }
+    // Left and right borders
+    for y in (minimap_y - padding)..(minimap_y + minimap_height + padding) {
+        framebuffer.set_pixel((minimap_x - padding) as i32, y as i32);
+        framebuffer.set_pixel((minimap_x + minimap_width + padding - 1) as i32, y as i32);
+    }
+
+    // Draw maze walls
+    framebuffer.set_current_color(Color::new(150, 150, 150, 255));
+    for (row_index, row) in maze.iter().enumerate() {
+        for (col_index, &cell) in row.iter().enumerate() {
+            if cell != ' ' {
+                let x_start = minimap_x + col_index * minimap_block_size;
+                let y_start = minimap_y + row_index * minimap_block_size;
+
+                for x in x_start..(x_start + minimap_block_size) {
+                    for y in y_start..(y_start + minimap_block_size) {
+                        framebuffer.set_pixel(x as i32, y as i32);
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate player position on minimap
+    let player_minimap_x = minimap_x as f32 + (player.pos.x / minimap_scale as f32);
+    let player_minimap_y = minimap_y as f32 + (player.pos.y / minimap_scale as f32);
+
+    // Draw player position
+    framebuffer.set_current_color(Color::new(0, 255, 0, 255)); // Green
+    let player_size = 3; // Size of player dot
+    for x in -player_size..=player_size {
+        for y in -player_size..=player_size {
+            if x * x + y * y <= player_size * player_size {
+                // Circle shape
+                framebuffer.set_pixel((player_minimap_x as i32) + x, (player_minimap_y as i32) + y);
+            }
+        }
+    }
+
+    // Draw player direction indicator
+    framebuffer.set_current_color(Color::new(255, 0, 0, 255)); // Red
+    for i in 0..15 {
+        let x = player_minimap_x + (i as f32 * player.a.cos());
+        let y = player_minimap_y + (i as f32 * player.a.sin());
+        framebuffer.set_pixel(x as i32, y as i32);
+    }
+}
+
 fn main() {
     let window_width = 1300;
     let window_height = 900;
@@ -90,6 +146,9 @@ fn main() {
         .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
+
+    // Lock and hide the mouse cursor for FPS-style controls
+    window.disable_cursor();
 
     let mut framebuffer = Framebuffer::new(window_width as i32, window_height as i32, Color::BLACK);
     let mut player = Player {
@@ -103,31 +162,26 @@ fn main() {
     // Load the maze once before the loop
     let maze = load_maze("maze.txt");
 
-    let mut mode = "3D";
-
     while !window.window_should_close() {
         // 1. clear framebuffer
         framebuffer.clear();
 
+        // Handle mouse lock/unlock with ESC key
+        if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            if window.is_cursor_hidden() {
+                window.enable_cursor();
+            } else {
+                window.disable_cursor();
+            }
+        }
+
         process_events(&window, &mut player, &maze, block_size);
 
-        if window.is_key_pressed(KeyboardKey::KEY_M) {
-            mode = if mode == "2D" { "3D" } else { "2D" };
-        }
+        // Always render 3D view
+        render3d(&mut framebuffer, &player, &maze, block_size);
 
-        framebuffer.clear();
-
-        if mode == "2D" {
-            render_maze(&mut framebuffer, &maze, block_size);
-            let num_rays = 50; // Reduced from 100
-            for i in 0..num_rays {
-                let current_ray = i as f32 / num_rays as f32;
-                let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
-                cast_ray(&mut framebuffer, &maze, &player, a, block_size, true);
-            }
-        } else {
-            render3d(&mut framebuffer, &player, &maze, block_size);
-        }
+        // Always render minimap on top
+        render_minimap(&mut framebuffer, &maze, &player, block_size);
 
         // 3. swap buffers
         framebuffer.swap_buffers(&mut window, &raylib_thread);
