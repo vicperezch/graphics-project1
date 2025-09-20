@@ -8,8 +8,6 @@ use maze::{Maze, load_maze};
 use player::Player;
 use raylib::prelude::*;
 use std::f32::consts::PI;
-use std::thread;
-use std::time::Duration;
 
 use crate::caster::cast_ray;
 use crate::player::process_events;
@@ -40,34 +38,44 @@ pub fn render_maze(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize
 }
 
 fn render3d(framebuffer: &mut Framebuffer, player: &Player, maze: &Maze, block_size: usize) {
-    let num_rays = framebuffer.width;
+    let num_rays = framebuffer.width / 2; // Reduce ray count for performance
+    let width = framebuffer.width as f32;
+    let height = framebuffer.height as f32;
 
-    let hw = framebuffer.width as f32 / 2.0; // precalculated half width
-    let hh = framebuffer.height as f32 / 2.0; // precalculated half height
+    let hw = width / 2.0;
+    let hh = height / 2.0;
 
     framebuffer.set_current_color(Color::WHITESMOKE);
 
+    // Pre-calculate constants
+    let distance_to_projection_plane = hw / (player.fov / 2.0).tan();
+    let fov_start = player.a - (player.fov / 2.0);
+
     for i in 0..num_rays {
-        let current_ray = i as f32 / num_rays as f32; // current ray divided by total rays
-        let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+        let current_ray = i as f32 / num_rays as f32;
+        let a = fov_start + (player.fov * current_ray);
         let intersect = cast_ray(framebuffer, &maze, &player, a, block_size, false);
 
+        // Skip rendering if ray didn't hit anything
         if intersect.distance > 4000.0 {
             continue;
         }
 
-        // Calculate the height of the stake
-        let distance_to_wall = intersect.distance * 5.0; // how far is this wall from the player
-        let distance_to_projection_plane = hw / (player.fov / 2.0).tan(); // how far is the "player" from the "camera"
-        let stake_height = (hh / distance_to_wall) * distance_to_projection_plane;
+        // Apply fisheye correction
+        let corrected_distance = intersect.distance * ((player.a - a).cos());
 
-        // Calculate the position to draw the stake
-        let stake_top = (hh - (stake_height / 2.0)) as usize;
-        let stake_bottom = (hh + (stake_height / 2.0)) as usize;
+        // Calculate the height of the wall slice
+        let stake_height = (block_size as f32 * distance_to_projection_plane) / corrected_distance;
 
-        // Draw the stake directly in the framebuffer
+        // Calculate vertical position
+        let stake_top = ((hh - stake_height / 2.0).max(0.0)) as i32;
+        let stake_bottom = ((hh + stake_height / 2.0).min(height - 1.0)) as i32;
+
+        // Draw two pixels wide for better coverage since we're using half resolution
+        let x = i * 2;
         for y in stake_top..stake_bottom {
-            framebuffer.set_pixel(i as i32, y as i32); // Assuming white color for the stake
+            framebuffer.set_pixel(x as i32, y);
+            framebuffer.set_pixel((x + 1) as i32, y);
         }
     }
 }
@@ -79,7 +87,7 @@ fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster")
+        .title("Raycaster Example")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
@@ -111,7 +119,7 @@ fn main() {
 
         if mode == "2D" {
             render_maze(&mut framebuffer, &maze, block_size);
-            let num_rays = 100;
+            let num_rays = 50; // Reduced from 100
             for i in 0..num_rays {
                 let current_ray = i as f32 / num_rays as f32;
                 let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
@@ -123,7 +131,6 @@ fn main() {
 
         // 3. swap buffers
         framebuffer.swap_buffers(&mut window, &raylib_thread);
-
-        thread::sleep(Duration::from_millis(5));
     }
 }
+
