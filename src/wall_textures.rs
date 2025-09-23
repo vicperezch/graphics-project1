@@ -1,19 +1,19 @@
 use raylib::prelude::*;
 
 pub struct WallTextures {
-    texture_data: Vec<Color>,
+    wall_texture: Vec<Color>,
+    enemy_texture: Vec<Color>,
     texture_size: usize,
     enabled: bool,
+    enemy_enabled: bool,
 }
 
 impl WallTextures {
     pub fn new() -> Self {
-        // Try to load texture from file
-        let (texture_data, texture_size, enabled) =
+        // Try to load wall texture
+        let (wall_texture, texture_size, enabled) =
             if let Ok(image) = Image::load_image("assets/wall.png") {
                 println!("Loaded wall texture: {}x{}", image.width, image.height);
-
-                // Use native resolution up to 256x256 for better quality
                 let target_size = (image.width as usize).min(256).max(128);
                 let data = Self::extract_colors(&image, target_size);
                 (data, target_size, true)
@@ -22,10 +22,23 @@ impl WallTextures {
                 (Vec::new(), 128, false)
             };
 
+        // Try to load enemy texture
+        let (enemy_texture, enemy_enabled) =
+            if let Ok(image) = Image::load_image("assets/enemy.png") {
+                println!("Loaded enemy sprite: {}x{}", image.width, image.height);
+                let data = Self::extract_colors(&image, texture_size);
+                (data, true)
+            } else {
+                println!("No enemy sprite found at assets/enemy.png - enemies won't be visible");
+                (Vec::new(), false)
+            };
+
         WallTextures {
-            texture_data,
+            wall_texture,
+            enemy_texture,
             texture_size,
             enabled,
+            enemy_enabled,
         }
     }
 
@@ -34,39 +47,29 @@ impl WallTextures {
         let height = image.height as usize;
         let mut colors = Vec::with_capacity(target_size * target_size);
 
-        // If image is already the target size, use it directly
         if width == target_size && height == target_size {
-            // Direct copy for better quality
             unsafe {
                 let data_ptr = image.data as *const u8;
                 if !data_ptr.is_null() {
                     let data = std::slice::from_raw_parts(data_ptr, width * height * 4);
-
                     for i in (0..data.len()).step_by(4) {
                         colors.push(Color::new(data[i], data[i + 1], data[i + 2], data[i + 3]));
                     }
                 }
             }
         } else {
-            // Scale image to target size
             for ty in 0..target_size {
                 for tx in 0..target_size {
-                    // Bilinear interpolation for smoother scaling
-                    let fx = (tx as f32 * width as f32 / target_size as f32);
-                    let fy = (ty as f32 * height as f32 / target_size as f32);
-
-                    let sx = fx as usize;
-                    let sy = fy as usize;
-
-                    let sx = sx.min(width - 1);
-                    let sy = sy.min(height - 1);
+                    let fx = tx as f32 * width as f32 / target_size as f32;
+                    let fy = ty as f32 * height as f32 / target_size as f32;
+                    let sx = (fx as usize).min(width - 1);
+                    let sy = (fy as usize).min(height - 1);
 
                     let color = unsafe {
                         let data_ptr = image.data as *const u8;
                         if !data_ptr.is_null() {
                             let idx = (sy * width + sx) * 4;
                             let data = std::slice::from_raw_parts(data_ptr, width * height * 4);
-
                             if idx + 3 < data.len() {
                                 Color::new(data[idx], data[idx + 1], data[idx + 2], data[idx + 3])
                             } else {
@@ -80,29 +83,47 @@ impl WallTextures {
                 }
             }
         }
-
         colors
     }
 
     #[inline(always)]
-    pub fn get_pixel(&self, x: usize, y: usize, _wall_type: char) -> Color {
-        if !self.enabled || self.texture_data.is_empty() {
-            return Color::GRAY;
-        }
+    pub fn get_pixel(&self, x: usize, y: usize, wall_type: char) -> Color {
+        if wall_type == 'e' {
+            // Enemy sprite
+            if !self.enemy_enabled || self.enemy_texture.is_empty() {
+                return Color::RED; // Fallback color for enemies
+            }
+            let tx = (x * self.texture_size / 128).min(self.texture_size - 1);
+            let ty = (y * self.texture_size / 128).min(self.texture_size - 1);
+            let idx = ty * self.texture_size + tx;
 
-        // Scale coordinates to actual texture size
-        let tx = (x * self.texture_size / 128).min(self.texture_size - 1);
-        let ty = (y * self.texture_size / 128).min(self.texture_size - 1);
-        let idx = ty * self.texture_size + tx;
-
-        if idx < self.texture_data.len() {
-            self.texture_data[idx]
+            if idx < self.enemy_texture.len() {
+                self.enemy_texture[idx]
+            } else {
+                Color::RED
+            }
         } else {
-            Color::GRAY
+            // Wall texture
+            if !self.enabled || self.wall_texture.is_empty() {
+                return Color::GRAY;
+            }
+            let tx = (x * self.texture_size / 128).min(self.texture_size - 1);
+            let ty = (y * self.texture_size / 128).min(self.texture_size - 1);
+            let idx = ty * self.texture_size + tx;
+
+            if idx < self.wall_texture.len() {
+                self.wall_texture[idx]
+            } else {
+                Color::GRAY
+            }
         }
     }
 
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn is_enemy_enabled(&self) -> bool {
+        self.enemy_enabled
     }
 }

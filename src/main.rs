@@ -1,8 +1,10 @@
 mod caster;
+mod enemy;
 mod maze;
 mod player;
 mod wall_textures;
 
+use enemy::Enemy;
 use maze::{Maze, load_maze};
 use player::Player;
 use raylib::prelude::*;
@@ -20,6 +22,7 @@ fn render3d(
     wall_textures: &WallTextures,
     window_width: i32,
     window_height: i32,
+    zbuffer: &mut Vec<f32>,
 ) {
     let num_rays = 320;
     let width = window_width as f32;
@@ -27,6 +30,10 @@ fn render3d(
 
     let hw = width / 2.0;
     let hh = height / 2.0;
+
+    // Clear zbuffer
+    zbuffer.clear();
+    zbuffer.resize(window_width as usize, f32::MAX);
 
     // Draw sky and floor
     d.draw_rectangle(
@@ -60,27 +67,32 @@ fn render3d(
         }
 
         let corrected_distance = intersect.perpendicular_distance.max(10.0);
+
+        // Store depth in zbuffer for all columns this ray covers
+        let x_start = (i as f32 * column_width as f32) as i32;
+        let x_end = ((i + 1) as f32 * column_width as f32) as i32;
+        for x in x_start..x_end {
+            if x >= 0 && x < window_width {
+                zbuffer[x as usize] = corrected_distance;
+            }
+        }
+
         let wall_height = ((block_size as f32 * distance_to_projection_plane) / corrected_distance)
             .min(height * 2.0);
 
-        // Calculate the actual texture portion that's visible
         let wall_top_unclamped = hh - wall_height / 2.0;
         let wall_bottom_unclamped = hh + wall_height / 2.0;
 
-        // Screen boundaries
         let wall_top = wall_top_unclamped.max(0.0) as i32;
         let wall_bottom = wall_bottom_unclamped.min(height) as i32;
 
-        // Calculate texture offset for walls that extend beyond screen
         let tex_start = if wall_top_unclamped < 0.0 {
-            // Wall extends above screen - start texture partway through
             ((-wall_top_unclamped / wall_height) * 128.0) as usize
         } else {
             0
         };
 
         let tex_end = if wall_bottom_unclamped > height {
-            // Wall extends below screen - end texture partway through
             (((height - wall_top_unclamped) / wall_height) * 128.0) as usize
         } else {
             128
@@ -89,20 +101,18 @@ fn render3d(
         let x = (i as f32 * column_width as f32) as i32;
 
         if wall_textures.is_enabled() {
-            // Adaptive strip height based on wall height
             let strip_height = if corrected_distance < 50.0 {
-                16 // Very close
+                16
             } else if corrected_distance < 100.0 {
-                8 // Close
+                8
             } else {
-                4 // Normal
+                4
             };
 
             let visible_height = wall_bottom - wall_top;
             let tex_range = tex_end - tex_start;
             let tex_step = tex_range as f32 / visible_height as f32;
 
-            // Limit strips for performance
             let max_strips = 50;
             let actual_strip_height = (visible_height / max_strips).max(strip_height);
 
@@ -122,7 +132,7 @@ fn render3d(
                     255,
                 );
 
-                d.draw_rectangle(x, y, column_width + 1, (strip_end - y), shaded_color);
+                d.draw_rectangle(x, y, column_width + 1, strip_end - y, shaded_color);
 
                 current_tex_y += (strip_end - y) as f32 * tex_step;
             }
@@ -141,13 +151,145 @@ fn render3d(
                 255,
             );
 
-            d.draw_rectangle(
-                x,
-                wall_top,
-                column_width + 1,
-                (wall_bottom - wall_top),
-                color,
-            );
+            d.draw_rectangle(x, wall_top, column_width + 1, wall_bottom - wall_top, color);
+        }
+    }
+}
+
+fn render_enemies(
+    d: &mut RaylibDrawHandle,
+    player: &Player,
+    enemies: &[Enemy],
+    wall_textures: &WallTextures,
+    window_width: i32,
+    window_height: i32,
+    zbuffer: &[f32],
+) {
+    if !wall_textures.is_enemy_enabled() {
+        return;
+    }
+
+    let hw = window_width as f32 / 2.0;
+    let hh = window_height as f32 / 2.0;
+    let distance_to_projection_plane = hw / (player.fov / 2.0).tan();
+
+    // Sort enemies by distance (furthest first)
+    let mut sorted_enemies: Vec<(usize, f32)> = enemies
+        .iter()
+        .enumerate()
+        .map(|(i, enemy)| {
+            let dx = enemy.pos.x - player.pos.x;
+            let dy = enemy.pos.y - player.pos.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            (i, dist)
+        })
+        .collect();
+    sorted_enemies.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    for (enemy_idx, distance) in sorted_enemies {
+        let enemy = &enemies[enemy_idx];
+
+        let dx = enemy.pos.x - player.pos.x;
+        let dy = enemy.pos.y - player.pos.y;
+        let sprite_angle = dy.atan2(dx);
+
+        let mut angle_diff = sprite_angle - player.a;
+        while angle_diff > PI {
+            angle_diff -= 2.0 * PI;
+        }
+        while angle_diff < -PI {
+            angle_diff += 2.0 * PI;
+        }
+
+        if angle_diff.abs() > player.fov / 2.0 + 0.2 {
+            continue;
+        }
+
+        if distance < 20.0 || distance > 1500.0 {
+            continue;
+        }
+
+        let sprite_height = (100.0 * distance_to_projection_plane) / distance;
+        let sprite_width = sprite_height;
+
+        let screen_x = hw + (angle_diff.tan() * distance_to_projection_plane);
+        let x_start = (screen_x - sprite_width / 2.0) as i32;
+        let x_end = (screen_x + sprite_width / 2.0) as i32;
+        let y_start = (hh - sprite_height / 2.0) as i32;
+        let y_end = (hh + sprite_height / 2.0) as i32;
+
+        if x_end < 0 || x_start >= window_width || y_end < 0 || y_start >= window_height {
+            continue;
+        }
+
+        let clipped_x_start = x_start.max(0);
+        let clipped_x_end = x_end.min(window_width);
+        let clipped_y_start = y_start.max(0);
+        let clipped_y_end = y_end.min(window_height);
+
+        // Check if enemy center is behind a wall
+        let center_x = screen_x as i32;
+        if center_x >= 0 && center_x < window_width {
+            if distance >= zbuffer[center_x as usize] {
+                continue;
+            }
+        }
+
+        // Dynamic strip width based on sprite size to maintain performance
+        let sprite_screen_width = clipped_x_end - clipped_x_start;
+        let strip_width = if sprite_screen_width > 300 {
+            16 // Very large sprite
+        } else if sprite_screen_width > 150 {
+            8 // Large sprite
+        } else if sprite_screen_width > 75 {
+            4 // Medium sprite
+        } else {
+            2 // Small sprite - keep detail
+        };
+
+        // Dynamic vertical strip height for large sprites
+        let sprite_screen_height = clipped_y_end - clipped_y_start;
+        let y_strip = if sprite_screen_height > 400 {
+            12 // Very tall sprite
+        } else if sprite_screen_height > 200 {
+            8 // Tall sprite
+        } else {
+            4 // Normal height
+        };
+
+        // Limit total strips for performance
+        let max_x_strips = 30;
+        let actual_strip_width = (sprite_screen_width / max_x_strips).max(strip_width);
+
+        for x in (clipped_x_start..clipped_x_end).step_by(actual_strip_width as usize) {
+            // Check zbuffer for this column
+            if x >= 0 && x < window_width && distance >= zbuffer[x as usize] {
+                continue;
+            }
+
+            let strip_end = (x + actual_strip_width).min(clipped_x_end);
+            let tex_x = (((x - x_start) as f32 / sprite_width * 128.0) as usize).min(127);
+
+            for y in (clipped_y_start..clipped_y_end).step_by(y_strip) {
+                let strip_height = (y + y_strip as i32).min(clipped_y_end) - y;
+                let tex_y = (((y - y_start) as f32 / sprite_height * 128.0) as usize).min(127);
+
+                let color = wall_textures.get_pixel(tex_x, tex_y, 'e');
+
+                if color.a < 10 {
+                    continue;
+                }
+
+                let shade = (1.0 - (distance / 800.0)).max(0.4).min(1.0);
+                let shaded_color = Color::new(
+                    (color.r as f32 * shade) as u8,
+                    (color.g as f32 * shade) as u8,
+                    (color.b as f32 * shade) as u8,
+                    color.a,
+                );
+
+                d.draw_rectangle(x, y, strip_end - x, strip_height, shaded_color);
+            }
         }
     }
 }
@@ -159,8 +301,8 @@ fn render_minimap(
     window_width: i32,
     block_size: usize,
 ) {
-    let minimap_scale = 8i32; // Change to i32
-    let minimap_block_size = (block_size as i32 / minimap_scale);
+    let minimap_scale = 8i32;
+    let minimap_block_size = block_size as i32 / minimap_scale;
     let minimap_width = (maze[0].len() as i32) * minimap_block_size;
     let minimap_height = (maze.len() as i32) * minimap_block_size;
     let margin = 20;
@@ -219,8 +361,13 @@ fn main() {
         fov: PI / 3.0,
     };
 
-    let maze = load_maze("maze.txt");
+    let (maze, enemies) = load_maze("maze.txt");
     let wall_textures = WallTextures::new();
+
+    // Create zbuffer for depth testing
+    let mut zbuffer: Vec<f32> = vec![f32::MAX; window_width as usize];
+
+    println!("Loaded {} enemies from maze", enemies.len());
 
     while !window.window_should_close() {
         if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
@@ -249,6 +396,16 @@ fn main() {
             &wall_textures,
             window_width,
             window_height,
+            &mut zbuffer,
+        );
+        render_enemies(
+            &mut d,
+            &player,
+            &enemies,
+            &wall_textures,
+            window_width,
+            window_height,
+            &zbuffer,
         );
         render_minimap(&mut d, &maze, &player, window_width, block_size);
 
