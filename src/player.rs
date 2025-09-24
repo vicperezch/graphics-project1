@@ -96,3 +96,4 @@ fn is_valid_position(x: f32, y: f32, maze: &Maze, block_size: usize, margin: f32
 
     true
 }
+
