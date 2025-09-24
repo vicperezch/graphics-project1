@@ -17,6 +17,7 @@ use crate::player::process_events;
 #[derive(PartialEq)]
 enum GameState {
     Menu,
+    LevelSelect,
     Playing,
 }
 
@@ -26,7 +27,7 @@ struct MenuOption {
 }
 
 fn start_game() -> GameState {
-    GameState::Playing
+    GameState::LevelSelect
 }
 
 fn quit_game() -> GameState {
@@ -89,6 +90,61 @@ fn render_menu(
 
     // Instructions
     let instructions = "Use UP/DOWN arrows to select, ENTER to confirm";
+    let inst_font_size = 20;
+    let inst_width = d.measure_text(instructions, inst_font_size);
+    let inst_x = (window_width - inst_width) / 2;
+    let inst_y = window_height - 100;
+
+    d.draw_text(instructions, inst_x, inst_y, inst_font_size, Color::GRAY);
+}
+
+fn render_level_select(
+    d: &mut RaylibDrawHandle,
+    window_width: i32,
+    window_height: i32,
+    selected_level: usize,
+) {
+    // Draw background
+    d.clear_background(Color::new(30, 30, 40, 255));
+
+    // Title
+    let title = "Select Level";
+    let title_font_size = 60;
+    let title_width = d.measure_text(title, title_font_size);
+    let title_x = (window_width - title_width) / 2;
+    let title_y = window_height / 4;
+
+    d.draw_text(title, title_x, title_y, title_font_size, Color::WHITE);
+
+    // Level options
+    let levels = vec!["Level 1", "Level 2", "Level 3"];
+
+    let option_font_size = 40;
+    let option_spacing = 60;
+    let options_start_y = window_height / 2;
+
+    for (i, level) in levels.iter().enumerate() {
+        let option_width = d.measure_text(level, option_font_size);
+        let option_x = (window_width - option_width) / 2;
+        let option_y = options_start_y + (i as i32 * option_spacing);
+
+        let color = if i == selected_level {
+            Color::YELLOW
+        } else {
+            Color::LIGHTGRAY
+        };
+
+        d.draw_text(level, option_x, option_y, option_font_size, color);
+
+        // Draw selection indicator
+        if i == selected_level {
+            let arrow_x = option_x - 40;
+            d.draw_text(">", arrow_x, option_y, option_font_size, Color::YELLOW);
+        }
+    }
+
+    // Instructions
+    let instructions = "Use UP/DOWN arrows to select, ENTER to confirm, ESC to go back";
     let inst_font_size = 20;
     let inst_width = d.measure_text(instructions, inst_font_size);
     let inst_x = (window_width - inst_width) / 2;
@@ -443,11 +499,14 @@ fn main() {
     // Game state
     let mut game_state = GameState::Menu;
     let mut selected_option = 0;
+    let mut selected_level = 0;
     let num_options = 2;
+    let num_levels = 3;
 
-    // Game resources
-    let (maze, enemies) = load_maze("maze.txt");
-    let wall_textures = WallTextures::new();
+    // Game resources - will be loaded when level is selected
+    let mut maze: Maze = Vec::new();
+    let mut enemies: Vec<Enemy> = Vec::new();
+    let mut wall_textures = WallTextures::new();
     let mut zbuffer: Vec<f32> = vec![f32::MAX; window_width as usize];
 
     // Player - will be reset each time game starts
@@ -457,7 +516,8 @@ fn main() {
         fov: PI / 3.0,
     };
 
-    println!("Loaded {} enemies from maze", enemies.len());
+    // Track if level is loaded
+    let mut level_loaded = false;
 
     while !window.window_should_close() {
         match game_state {
@@ -476,14 +536,8 @@ fn main() {
                 if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
                     // Execute the selected option
                     if selected_option == 0 {
-                        // Reset player to initial state when starting game
-                        player = Player {
-                            pos: Vector2::new(150.0, 150.0),
-                            a: PI / 3.0,
-                            fov: PI / 3.0,
-                        };
-                        game_state = GameState::Playing;
-                        window.disable_cursor();
+                        game_state = GameState::LevelSelect;
+                        selected_level = 0; // Reset level selection
                     } else if selected_option == 1 {
                         break; // Exit the game loop
                     }
@@ -494,7 +548,74 @@ fn main() {
                 render_menu(&mut d, window_width, window_height, selected_option);
             }
 
+            GameState::LevelSelect => {
+                // Handle level selection input
+                if window.is_key_pressed(KeyboardKey::KEY_UP) {
+                    if selected_level > 0 {
+                        selected_level -= 1;
+                    }
+                }
+                if window.is_key_pressed(KeyboardKey::KEY_DOWN) {
+                    if selected_level < num_levels - 1 {
+                        selected_level += 1;
+                    }
+                }
+                if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+                    // Go back to main menu
+                    game_state = GameState::Menu;
+                    selected_option = 0;
+                }
+                if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                    // Load the selected level
+                    let level_file = match selected_level {
+                        0 => "level1.txt",
+                        1 => "level2.txt",
+                        2 => "level3.txt",
+                        _ => "level1.txt",
+                    };
+
+                    // Try to load the level, fall back to maze.txt if file doesn't exist
+                    let (loaded_maze, loaded_enemies) = if std::path::Path::new(level_file).exists()
+                    {
+                        println!("Loading {}", level_file);
+                        load_maze(level_file)
+                    } else {
+                        println!("{} not found, loading maze.txt as fallback", level_file);
+                        load_maze("maze.txt")
+                    };
+
+                    maze = loaded_maze;
+                    enemies = loaded_enemies;
+
+                    // Reload textures in case they've changed
+                    wall_textures = WallTextures::new();
+
+                    println!("Loaded {} enemies from level", enemies.len());
+
+                    // Reset player to initial state
+                    player = Player {
+                        pos: Vector2::new(150.0, 150.0),
+                        a: PI / 3.0,
+                        fov: PI / 3.0,
+                    };
+
+                    level_loaded = true;
+                    game_state = GameState::Playing;
+                    window.disable_cursor();
+                }
+
+                // Render level selection
+                let mut d = window.begin_drawing(&raylib_thread);
+                render_level_select(&mut d, window_width, window_height, selected_level);
+            }
+
             GameState::Playing => {
+                // Make sure a level is loaded
+                if !level_loaded {
+                    game_state = GameState::Menu;
+                    continue;
+                }
+
                 // Check for ESC key BEFORE processing other events
                 if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
                     // Return to menu
@@ -537,6 +658,10 @@ fn main() {
 
                 // FPS counter
                 d.draw_text(&format!("FPS: {}", fps), 10, 10, 20, Color::GREEN);
+
+                // Show current level
+                let level_text = format!("Level {}", selected_level + 1);
+                d.draw_text(&level_text, 10, 35, 20, Color::GREEN);
             }
         }
     }
