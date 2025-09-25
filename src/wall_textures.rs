@@ -3,9 +3,11 @@ use raylib::prelude::*;
 pub struct WallTextures {
     wall_texture: Vec<Color>,
     enemy_texture: Vec<Color>,
+    finish_texture: Vec<Color>,
     texture_size: usize,
     enabled: bool,
     enemy_enabled: bool,
+    finish_enabled: bool,
 }
 
 impl WallTextures {
@@ -33,12 +35,25 @@ impl WallTextures {
                 (Vec::new(), false)
             };
 
+        // Try to load finish texture
+        let (finish_texture, finish_enabled) =
+            if let Ok(image) = Image::load_image("assets/finish.png") {
+                println!("Loaded finish sprite: {}x{}", image.width, image.height);
+                let data = Self::extract_colors(&image, texture_size);
+                (data, true)
+            } else {
+                println!("No finish sprite found at assets/finish.png - using fallback color");
+                (Vec::new(), false)
+            };
+
         WallTextures {
             wall_texture,
             enemy_texture,
+            finish_texture,
             texture_size,
             enabled,
             enemy_enabled,
+            finish_enabled,
         }
     }
 
@@ -87,8 +102,8 @@ impl WallTextures {
     }
 
     #[inline(always)]
-    pub fn get_pixel(&self, x: usize, y: usize, wall_type: char) -> Color {
-        if wall_type == 'e' {
+    pub fn get_pixel(&self, x: usize, y: usize, sprite_type: char) -> Color {
+        if sprite_type == 'e' {
             // Enemy sprite
             if !self.enemy_enabled || self.enemy_texture.is_empty() {
                 return Color::RED; // Fallback color for enemies
@@ -101,6 +116,20 @@ impl WallTextures {
                 self.enemy_texture[idx]
             } else {
                 Color::RED
+            }
+        } else if sprite_type == 'w' {
+            // Finish/win sprite
+            if !self.finish_enabled || self.finish_texture.is_empty() {
+                return Color::GOLD; // Fallback color for finish
+            }
+            let tx = (x * self.texture_size / 128).min(self.texture_size - 1);
+            let ty = (y * self.texture_size / 128).min(self.texture_size - 1);
+            let idx = ty * self.texture_size + tx;
+
+            if idx < self.finish_texture.len() {
+                self.finish_texture[idx]
+            } else {
+                Color::GOLD
             }
         } else {
             // Wall texture
@@ -126,4 +155,9 @@ impl WallTextures {
     pub fn is_enemy_enabled(&self) -> bool {
         self.enemy_enabled
     }
+
+    pub fn is_finish_enabled(&self) -> bool {
+        self.finish_enabled
+    }
 }
+
