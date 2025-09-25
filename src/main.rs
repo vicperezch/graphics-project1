@@ -20,6 +20,7 @@ enum GameState {
     LevelSelect,
     Playing,
     Victory,
+    GameOver,
 }
 
 struct MenuOption {
@@ -97,6 +98,89 @@ fn render_menu(
     let inst_y = window_height - 100;
 
     d.draw_text(instructions, inst_x, inst_y, inst_font_size, Color::GRAY);
+}
+
+fn render_game_over(
+    d: &mut RaylibDrawHandle,
+    window_width: i32,
+    window_height: i32,
+    level_num: usize,
+) {
+    // Draw background
+    d.clear_background(Color::new(30, 30, 40, 255));
+
+    // Game Over message
+    let title = "Game Over";
+    let title_font_size = 80;
+    let title_width = d.measure_text(title, title_font_size);
+    let title_x = (window_width - title_width) / 2;
+    let title_y = window_height / 4;
+
+    d.draw_text(title, title_x, title_y, title_font_size, Color::RED);
+
+    // Level failed message
+    let level_msg = format!("Level {} Failed", level_num + 1);
+    let level_font_size = 40;
+    let level_width = d.measure_text(&level_msg, level_font_size);
+    let level_x = (window_width - level_width) / 2;
+    let level_y = title_y + 100;
+
+    d.draw_text(&level_msg, level_x, level_y, level_font_size, Color::WHITE);
+
+    // Try again message
+    let try_again = "Try Again!";
+    let try_font_size = 30;
+    let try_width = d.measure_text(try_again, try_font_size);
+    let try_x = (window_width - try_width) / 2;
+    let try_y = window_height / 2;
+
+    d.draw_text(try_again, try_x, try_y, try_font_size, Color::LIGHTGRAY);
+
+    // Press enter instruction
+    let instruction = "Press ENTER to return to menu";
+    let inst_font_size = 25;
+    let inst_width = d.measure_text(instruction, inst_font_size);
+    let inst_x = (window_width - inst_width) / 2;
+    let inst_y = window_height - 150;
+
+    // Make it pulse
+    let time = d.get_time() as f32;
+    let alpha = ((time * 2.0).sin() * 0.5 + 0.5) * 255.0;
+    let inst_color = Color::new(255, 255, 255, alpha as u8);
+
+    d.draw_text(instruction, inst_x, inst_y, inst_font_size, inst_color);
+}
+
+fn render_lives(d: &mut RaylibDrawHandle, lives: i32, window_width: i32, window_height: i32) {
+    let circle_radius = 15.0;
+    let circle_spacing = 40;
+    let y = window_height - 50;
+
+    // Draw "Lives:" text
+    let text = "Lives:";
+    let text_size = 25;
+    let text_width = d.measure_text(text, text_size);
+
+    // Calculate positions
+    let total_circles_width = (2 * circle_spacing) - (circle_spacing - circle_radius as i32 * 2);
+    let total_width = text_width + 20 + total_circles_width; // 20 pixels gap between text and circles
+    let start_x = (window_width - total_width) / 2;
+
+    // Draw text
+    d.draw_text(text, start_x, y - 7, text_size, Color::WHITE);
+
+    // Draw circles
+    let circles_start_x = start_x + text_width + 20;
+    for i in 0..2 {
+        let x = circles_start_x + (i * circle_spacing) + circle_radius as i32;
+        if i < lives {
+            // Full life - filled red circle
+            d.draw_circle(x, y, circle_radius, Color::RED);
+        } else {
+            // Lost life - empty red circle outline
+            d.draw_circle_lines(x, y, circle_radius, Color::new(100, 0, 0, 255));
+        }
+    }
 }
 
 fn render_victory(
@@ -692,6 +776,10 @@ fn main() {
         fov: PI / 3.0,
     };
 
+    // Player state
+    let mut player_lives = 2;
+    let mut invulnerability_timer = 0.0f32;
+
     // Track if level is loaded
     let mut level_loaded = false;
 
@@ -769,6 +857,10 @@ fn main() {
                         fov: PI / 3.0,
                     };
 
+                    // Reset player lives and invulnerability
+                    player_lives = 2;
+                    invulnerability_timer = 0.0;
+
                     level_loaded = true;
                     game_state = GameState::Playing;
                     window.disable_cursor();
@@ -797,6 +889,36 @@ fn main() {
 
                 // Process game events
                 process_events(&window, &mut player, &maze, block_size);
+
+                // Update invulnerability timer
+                if invulnerability_timer > 0.0 {
+                    invulnerability_timer -= window.get_frame_time();
+                }
+
+                // Check for enemy collisions if not invulnerable
+                if invulnerability_timer <= 0.0 {
+                    for enemy in &enemies {
+                        let dx = player.pos.x - enemy.pos.x;
+                        let dy = player.pos.y - enemy.pos.y;
+                        let distance = (dx * dx + dy * dy).sqrt();
+
+                        // If player touches an enemy (within 30 units)
+                        if distance < 30.0 {
+                            player_lives -= 1;
+
+                            if player_lives <= 0 {
+                                // Game over
+                                game_state = GameState::GameOver;
+                                window.enable_cursor();
+                                continue;
+                            } else {
+                                // Give temporary invulnerability after taking damage
+                                invulnerability_timer = 2.0; // 2 seconds of invulnerability
+                            }
+                            break; // Only take damage from one enemy at a time
+                        }
+                    }
+                }
 
                 // Check for win condition - if player is close to finish position
                 if let Some(finish) = finish_pos {
@@ -849,6 +971,21 @@ fn main() {
                 );
                 render_minimap(&mut d, &maze, &player, window_width, block_size);
 
+                // Render lives at the bottom center
+                render_lives(&mut d, player_lives, window_width, window_height);
+
+                // Flash effect if invulnerable
+                if invulnerability_timer > 0.0 {
+                    let flash = ((invulnerability_timer * 10.0).sin() * 0.5 + 0.5) * 100.0;
+                    d.draw_rectangle(
+                        0,
+                        0,
+                        window_width,
+                        window_height,
+                        Color::new(255, 0, 0, flash as u8),
+                    );
+                }
+
                 // FPS counter
                 d.draw_text(&format!("FPS: {}", fps), 10, 10, 20, Color::GREEN);
 
@@ -869,6 +1006,20 @@ fn main() {
                 // Render victory screen
                 let mut d = window.begin_drawing(&raylib_thread);
                 render_victory(&mut d, window_width, window_height, selected_level);
+            }
+
+            GameState::GameOver => {
+                // Handle game over screen input
+                if window.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                    // Return to main menu
+                    game_state = GameState::Menu;
+                    selected_option = 0;
+                    level_loaded = false;
+                }
+
+                // Render game over screen
+                let mut d = window.begin_drawing(&raylib_thread);
+                render_game_over(&mut d, window_width, window_height, selected_level);
             }
         }
     }
