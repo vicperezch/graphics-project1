@@ -4,15 +4,17 @@ mod maze;
 mod player;
 mod wall_textures;
 
+use crate::caster::cast_ray;
+use crate::player::process_events;
 use enemy::Enemy;
 use maze::{Maze, load_maze};
 use player::Player;
 use raylib::prelude::*;
+use rodio::{Decoder, OutputStream, Sink};
 use std::f32::consts::PI;
+use std::fs::File;
+use std::io::BufReader;
 use wall_textures::WallTextures;
-
-use crate::caster::cast_ray;
-use crate::player::process_events;
 
 #[derive(PartialEq)]
 enum GameState {
@@ -92,6 +94,61 @@ fn render_menu(
 
     // Instructions
     let instructions = "Use UP/DOWN arrows to select, ENTER to confirm";
+    let inst_font_size = 20;
+    let inst_width = d.measure_text(instructions, inst_font_size);
+    let inst_x = (window_width - inst_width) / 2;
+    let inst_y = window_height - 100;
+
+    d.draw_text(instructions, inst_x, inst_y, inst_font_size, Color::GRAY);
+}
+
+fn render_level_select(
+    d: &mut RaylibDrawHandle,
+    window_width: i32,
+    window_height: i32,
+    selected_level: usize,
+) {
+    // Draw background
+    d.clear_background(Color::new(30, 30, 40, 255));
+
+    // Title
+    let title = "Select Level";
+    let title_font_size = 60;
+    let title_width = d.measure_text(title, title_font_size);
+    let title_x = (window_width - title_width) / 2;
+    let title_y = window_height / 4;
+
+    d.draw_text(title, title_x, title_y, title_font_size, Color::WHITE);
+
+    // Level options
+    let levels = vec!["Level 1", "Level 2", "Level 3"];
+
+    let option_font_size = 40;
+    let option_spacing = 60;
+    let options_start_y = window_height / 2;
+
+    for (i, level) in levels.iter().enumerate() {
+        let option_width = d.measure_text(level, option_font_size);
+        let option_x = (window_width - option_width) / 2;
+        let option_y = options_start_y + (i as i32 * option_spacing);
+
+        let color = if i == selected_level {
+            Color::YELLOW
+        } else {
+            Color::LIGHTGRAY
+        };
+
+        d.draw_text(level, option_x, option_y, option_font_size, color);
+
+        // Draw selection indicator
+        if i == selected_level {
+            let arrow_x = option_x - 40;
+            d.draw_text(">", arrow_x, option_y, option_font_size, Color::YELLOW);
+        }
+    }
+
+    // Instructions
+    let instructions = "Use UP/DOWN arrows to select, ENTER to confirm, ESC to go back";
     let inst_font_size = 20;
     let inst_width = d.measure_text(instructions, inst_font_size);
     let inst_x = (window_width - inst_width) / 2;
@@ -238,61 +295,6 @@ fn render_victory(
     let inst_color = Color::new(255, 255, 255, alpha as u8);
 
     d.draw_text(instruction, inst_x, inst_y, inst_font_size, inst_color);
-}
-
-fn render_level_select(
-    d: &mut RaylibDrawHandle,
-    window_width: i32,
-    window_height: i32,
-    selected_level: usize,
-) {
-    // Draw background
-    d.clear_background(Color::new(30, 30, 40, 255));
-
-    // Title
-    let title = "Select Level";
-    let title_font_size = 60;
-    let title_width = d.measure_text(title, title_font_size);
-    let title_x = (window_width - title_width) / 2;
-    let title_y = window_height / 4;
-
-    d.draw_text(title, title_x, title_y, title_font_size, Color::WHITE);
-
-    // Level options
-    let levels = vec!["Level 1", "Level 2", "Level 3"];
-
-    let option_font_size = 40;
-    let option_spacing = 60;
-    let options_start_y = window_height / 2;
-
-    for (i, level) in levels.iter().enumerate() {
-        let option_width = d.measure_text(level, option_font_size);
-        let option_x = (window_width - option_width) / 2;
-        let option_y = options_start_y + (i as i32 * option_spacing);
-
-        let color = if i == selected_level {
-            Color::YELLOW
-        } else {
-            Color::LIGHTGRAY
-        };
-
-        d.draw_text(level, option_x, option_y, option_font_size, color);
-
-        // Draw selection indicator
-        if i == selected_level {
-            let arrow_x = option_x - 40;
-            d.draw_text(">", arrow_x, option_y, option_font_size, Color::YELLOW);
-        }
-    }
-
-    // Instructions
-    let instructions = "Use UP/DOWN arrows to select, ENTER to confirm, ESC to go back";
-    let inst_font_size = 20;
-    let inst_width = d.measure_text(instructions, inst_font_size);
-    let inst_x = (window_width - inst_width) / 2;
-    let inst_y = window_height - 100;
-
-    d.draw_text(instructions, inst_x, inst_y, inst_font_size, Color::GRAY);
 }
 
 fn render3d(
@@ -490,7 +492,7 @@ fn render_enemies(
             continue;
         }
 
-        let sprite_height = (100.0 * distance_to_projection_plane) / distance * 0.7; // Scale down to 70%
+        let sprite_height = (100.0 * distance_to_projection_plane) / distance;
         let sprite_width = sprite_height;
 
         let screen_x = hw + (angle_diff.tan() * distance_to_projection_plane);
@@ -610,7 +612,7 @@ fn render_finish(
             return;
         }
 
-        let sprite_height = (100.0 * distance_to_projection_plane) / distance;
+        let sprite_height = (100.0 * distance_to_projection_plane) / distance * 0.7; // Scale down to 70%
         let sprite_width = sprite_height;
 
         let screen_x = hw + (angle_diff.tan() * distance_to_projection_plane);
@@ -739,6 +741,47 @@ fn render_minimap(
     d.draw_line(player_x, player_y, dir_x, dir_y, Color::RED);
 }
 
+// Simple audio manager for background music
+struct AudioManager {
+    music_playing: bool,
+    sink: Sink,
+    stream_handle: OutputStream,
+}
+
+impl AudioManager {
+    fn new() -> Self {
+        let sh =
+            rodio::OutputStreamBuilder::open_default_stream().expect("open default audio stream");
+
+        // Load a sound from a file, using a path relative to Cargo.toml
+        let file = BufReader::new(File::open("assets/background.mp3").unwrap());
+        // Note that the playback stops when the sink is dropped
+        let s = rodio::play(&sh.mixer(), file).unwrap();
+        s.set_volume(0.3);
+        s.pause();
+
+        AudioManager {
+            music_playing: false,
+            sink: s,
+            stream_handle: sh,
+        }
+    }
+
+    fn play_music(&mut self) {
+        self.music_playing = true;
+        self.sink.play();
+    }
+
+    fn pause_music(&mut self) {
+        self.music_playing = false;
+        self.sink.pause();
+    }
+
+    fn is_playing(&self) -> bool {
+        self.music_playing
+    }
+}
+
 fn main() {
     let window_width = 1300;
     let window_height = 900;
@@ -746,7 +789,7 @@ fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster Example")
+        .title("Raycaster Game")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
@@ -754,6 +797,9 @@ fn main() {
 
     // Disable ESC as exit key
     window.set_exit_key(None);
+
+    // Create simple audio manager
+    let mut audio = AudioManager::new();
 
     // Game state
     let mut game_state = GameState::Menu;
@@ -861,6 +907,9 @@ fn main() {
                     player_lives = 2;
                     invulnerability_timer = 0.0;
 
+                    // Start playing background music
+                    audio.play_music();
+
                     level_loaded = true;
                     game_state = GameState::Playing;
                     window.disable_cursor();
@@ -880,6 +929,8 @@ fn main() {
 
                 // Check for ESC key BEFORE processing other events
                 if window.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+                    // Pause music when returning to menu
+                    audio.pause_music();
                     // Return to menu
                     game_state = GameState::Menu;
                     window.enable_cursor();
@@ -907,7 +958,8 @@ fn main() {
                             player_lives -= 1;
 
                             if player_lives <= 0 {
-                                // Game over
+                                // Game over - pause music
+                                audio.pause_music();
                                 game_state = GameState::GameOver;
                                 window.enable_cursor();
                                 continue;
@@ -928,6 +980,7 @@ fn main() {
 
                     // If player is within 30 units of the finish position, they win!
                     if distance < 30.0 {
+                        audio.pause_music();
                         game_state = GameState::Victory;
                         window.enable_cursor();
                         continue;
