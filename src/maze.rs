@@ -12,7 +12,7 @@ pub fn load_maze(filename: &str) -> (Maze, Vec<Enemy>, Option<Vector2>) {
     let mut maze = Vec::new();
     let mut enemies = Vec::new();
     let mut finish_pos = None;
-    let block_size = 100.0; // Same as in main
+    let block_size = 100.0;
 
     for (row_index, line) in reader.lines().enumerate() {
         let line = line.unwrap();
@@ -24,13 +24,13 @@ pub fn load_maze(filename: &str) -> (Maze, Vec<Enemy>, Option<Vector2>) {
                 let x = col_index as f32 * block_size + block_size / 2.0;
                 let y = row_index as f32 * block_size + block_size / 2.0;
                 enemies.push(Enemy::new(x, y));
-                row.push(' '); // Replace with empty space in maze
+                row.push(' ');
             } else if ch == 'w' || ch == 'W' {
                 // Found the finish/win position, place it in the center of the cell
                 let x = col_index as f32 * block_size + block_size / 2.0;
                 let y = row_index as f32 * block_size + block_size / 2.0;
                 finish_pos = Some(Vector2::new(x, y));
-                row.push(' '); // Replace with empty space in maze
+                row.push(' ');
             } else {
                 row.push(ch);
             }
@@ -40,4 +40,3 @@ pub fn load_maze(filename: &str) -> (Maze, Vec<Enemy>, Option<Vector2>) {
 
     (maze, enemies, finish_pos)
 }
-

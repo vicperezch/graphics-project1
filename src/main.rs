@@ -10,7 +10,7 @@ use enemy::Enemy;
 use maze::{Maze, load_maze};
 use player::Player;
 use raylib::prelude::*;
-use rodio::{Decoder, OutputStream, Sink};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use std::f32::consts::PI;
 use std::fs::File;
 use std::io::BufReader;
@@ -44,10 +44,8 @@ fn render_menu(
     window_height: i32,
     selected_option: usize,
 ) {
-    // Draw background
     d.clear_background(Color::new(30, 30, 40, 255));
 
-    // Title
     let title = "Raycaster Game";
     let title_font_size = 60;
     let title_width = d.measure_text(title, title_font_size);
@@ -108,7 +106,6 @@ fn render_level_select(
     window_height: i32,
     selected_level: usize,
 ) {
-    // Draw background
     d.clear_background(Color::new(30, 30, 40, 255));
 
     // Title
@@ -231,10 +228,8 @@ fn render_lives(d: &mut RaylibDrawHandle, lives: i32, window_width: i32, window_
     for i in 0..2 {
         let x = circles_start_x + (i * circle_spacing) + circle_radius as i32;
         if i < lives {
-            // Full life - filled red circle
             d.draw_circle(x, y, circle_radius, Color::RED);
         } else {
-            // Lost life - empty red circle outline
             d.draw_circle_lines(x, y, circle_radius, Color::new(100, 0, 0, 255));
         }
     }
@@ -334,7 +329,6 @@ fn render3d(
         Color::BLACK,
     );
 
-    // Pre-calculate constants
     let distance_to_projection_plane = hw / (player.fov / 2.0).tan();
     let fov_start = player.a - (player.fov / 2.0);
     let fov_step = player.fov / num_rays as f32;
@@ -351,7 +345,6 @@ fn render3d(
 
         let corrected_distance = intersect.perpendicular_distance.max(10.0);
 
-        // Store depth in zbuffer for all columns this ray covers
         let x_start = (i as f32 * column_width as f32) as i32;
         let x_end = ((i + 1) as f32 * column_width as f32) as i32;
         for x in x_start..x_end {
@@ -782,6 +775,15 @@ impl AudioManager {
     }
 }
 
+fn play_damage_sound(stream_handle: &OutputStream) {
+    // Load a sound from a file, using a path relative to Cargo.toml
+    let file = BufReader::new(File::open("assets/damage.mp3").unwrap());
+    // Note that the playback stops when the sink is dropped
+    let sink = rodio::play(&stream_handle.mixer(), file).unwrap();
+    sink.set_volume(0.3);
+    sink.detach();
+}
+
 fn main() {
     let window_width = 1300;
     let window_height = 900;
@@ -828,6 +830,8 @@ fn main() {
 
     // Track if level is loaded
     let mut level_loaded = false;
+    let stream_handle =
+        rodio::OutputStreamBuilder::open_default_stream().expect("open default audio stream");
 
     while !window.window_should_close() {
         match game_state {
@@ -955,6 +959,7 @@ fn main() {
 
                         // If player touches an enemy (within 30 units)
                         if distance < 30.0 {
+                            play_damage_sound(&stream_handle);
                             player_lives -= 1;
 
                             if player_lives <= 0 {
@@ -967,6 +972,7 @@ fn main() {
                                 // Give temporary invulnerability after taking damage
                                 invulnerability_timer = 2.0; // 2 seconds of invulnerability
                             }
+
                             break; // Only take damage from one enemy at a time
                         }
                     }

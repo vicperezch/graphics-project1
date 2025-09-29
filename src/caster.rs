@@ -34,12 +34,10 @@ pub fn cast_ray(maze: &Maze, player: &Player, a: f32, block_size: usize) -> Inte
         }
 
         if maze[j][i] != ' ' {
-            // Fine-tune to get exact wall hit point
             let mut exact_d = d - STEP_SIZE;
             let mut exact_x = player.pos.x + exact_d * cos_a;
             let mut exact_y = player.pos.y + exact_d * sin_a;
 
-            // Binary search for exact hit point
             for _ in 0..5 {
                 exact_d += 0.2;
                 exact_x = player.pos.x + exact_d * cos_a;
@@ -93,4 +91,3 @@ pub fn cast_ray(maze: &Maze, player: &Player, a: f32, block_size: usize) -> Inte
         }
     }
 }
-
