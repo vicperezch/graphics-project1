@@ -1,6 +1,7 @@
 # Raycaster Game
 
-A 3D first-person maze game built with Rust and Raylib.
+A 3D first-person maze game built with Rust and Raylib. \
+Video: https://youtu.be/onIZhByBdns
 
 ## Features
 
